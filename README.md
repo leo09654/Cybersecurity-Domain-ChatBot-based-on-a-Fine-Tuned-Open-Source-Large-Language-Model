@@ -1,38 +1,164 @@
-# Cybersecurity Domain ChatBot based on a Fine-Tuned Open Source Large Language Model
+# Cybersecurity domain ChatBot based on a fine-tuned open-source Large Language Model
+LLaMA 2-7B and Falcon-7B were fine-tuned on a cybersecurity specific dataset to evaluate whether these models can effectively answer questions in the cybersecurity domain. The dataset was manually compiled from Common Vulnerabilities and Exposures (CVE) records in the National Vulnerability Database ([NVD](https://nvd.nist.gov/)), and resources from [OWASP](https://owasp.org/www-project-top-ten/). The fine-tuning process involved using QLoRA with 4-bit quantization for memory efficient training and inference.
 
-The objective of this project was to develop an LLM powered chatbot that is fine-tuned with recent cybersecurity knowledge. Although new vulnerabilities are reported constantly and publicly by security experts, this project aims to determine the effectiveness of open-source LLMs in terms of learning the underlying cause and potential harm of such vulnerabilities. The methodology involves fine-tuning two open-source LLMs: Llama-2-7b-chat-hf and Falcon-7B. The Falcon model is highly effective for question-answering tasks and outperforms several other models such as StableLM, RedPajama and MPT. The LLaMa-2 models have demonstrated even better performance and cost efficiency as compared to other open-source LLMs including Falcon itself, according to Meta AI's benchmarks.
+# Quick Use
+To quickly run the fine-tuned models with QLoRA created in this project, you can follow the example below. The model can be loaded either locally or on Google Colab, with the latter being the preferred option.
 
-A dataset consisting of question-answer pairs referencing the latest publicly reported vulnerabilities in 2023 was required to fine-tune the models. Such a dataset was not found to be publicly available. Therefore, a novel database containing vulnerability information in the form of question-answer pairs was compiled using publicly available sources. These sources were the NVD and the OWASP 2023 Top 10 API and Mobile vulnerabilities. The final dataset was made public on HuggingFace. It is a comprehensive dataset containing 19,135 question-answer pairs related to cybersecurity.
+```python
+from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
+from peft import PeftModel, PeftConfig
+import torch
 
-Each base model was finetuned on three different sets of hyperparameters. The evaluation was performed by comparing the model generated answers with true answers, using a GPT-3.5 Assistant. Consequently, the best performing models were then obtained for Falcon-7B and Llama-2, from among the six fine-tuned models in total. Those models were quite effective in answering questions about the latest vulnerabilities described in the training data.
+# Define model path
+PEFT_MODEL = "shahrukh95/falcon-7b-Set-3-cybersecurity-layered-config"
 
-# Cybersecurity Dataset
+# Load PEFT configuration
+config = PeftConfig.from_pretrained(PEFT_MODEL)
 
-## OWASP Top 10
-The web page content of each of the [Top 10 API](https://owasp.org/API-Security/editions/2023/en/0x11-t10/) and [Mobile](https://owasp.org/www-project-mobile-top-10/2023-risks/) vulnerabilities were scraped. This content was fed into GPT-4 Turbo to convert it into question-answer pairs. A total of 273 question-answer pairs were obtained.
+# Define quantization configuration for QLoRA
+bnb_config = BitsAndBytesConfig(
+    load_in_4bit=True,  # Load model weights in 4-bit precision (saves memory)
+    bnb_4bit_use_double_quant=True,  # Enable double quantization (extra memory savings)
+    bnb_4bit_quant_type="nf4",  # Use Normalized Float 4 (better for language models)
+    bnb_4bit_compute_dtype=torch.float16  # Perform computations in 16-bit precision for accuracy
+)
 
-## NVD
-This database contains data from the Common Vulnerabilities and Exposures (CVE) program which provide unique identifiers, descriptions and references for publicly known cybersecurity vulnerabilities. In this project, CVEs from four domains were chosen: Android, Databases, Windows and Web Servers. They date from October 2022 to December 2023. This ensured that the models were fine-tuned only on recent cybersecurity data. All information about the vulnerabilities was obtained using NVD's 2.0 API. The implementation is available in the "Data Generator" folder. This information was also converted to question-answer pairs with GPT-4 Turbo. In total, 18,861 pairs were obtained.
+# Load the base model with quantization
+peft_base_model = AutoModelForCausalLM.from_pretrained(
+    config.base_model_name_or_path,  # Load the base model (Falcon-7B)
+    return_dict=True,
+    quantization_config=bnb_config,  # Apply quantization config
+    device_map="auto", # Automatically map model layers to available devices (i.e. GPU)
+    trust_remote_code=True # Enable custom model architectures
+)
+```
+Load the QLoRA adapter and tokenizer
+
+```python
+# Load the PEFT (QLoRA) adapter
+model = PeftModel.from_pretrained(peft_base_model, PEFT_MODEL)
+
+# Load the tokenizer
+tokenizer = AutoTokenizer.from_pretrained(PEFT_MODEL)
+# Set pad_token_id to eos_token_id
+if tokenizer.pad_token_id is None:
+    tokenizer.pad_token_id = tokenizer.eos_token_id
+
+# Move the model to GPU
+device = "cuda" if torch.cuda.is_available() else "cpu"
+model = model.to(device)
+```
+
+Make a pipeline for generating response
+
+```python
+# Response generator
+def generate_response(prompt, max_length=256):
+    inputs = tokenizer(prompt, return_tensors="pt").to(device)
+    with torch.no_grad():
+        outputs = model.generate(
+          **inputs,
+          max_new_tokens=256,  # Limit the output length for QA tasks
+          eos_token_id=tokenizer.eos_token_id,  # Explicitly set the stopping point
+          pad_token_id=tokenizer.pad_token_id,  # Explicitly include pad token
+          do_sample=False  # Use deterministic greedy decoding for QA tasks. No need for temp, top_k and top_p.
+      )
+
+    response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    return response
+```
+
+Ask a cybersecurity related question preferably in the domains mentioned in the **Dataset** section below.
+
+```python
+question = "What are the potential consequences of exploiting CVE-2023-29351?"
+print("Question:", question)
+answer = generate_response(question)
+print("Answer:", answer)
+```
+
+# System Requirements
+- **GPU VRAM:** 6 GB
+- **System RAM:** 4.1 GB
+- **Disk Usage:** 45.7 GB
+
+
+# Dataset
+The NVD provides an API to collect CVEs. The **Data Generator** folder contains the code to collect CVEs within a specific range of dates (October 2022 - December 2023). Vulnerabilities from OWASP were added to the dataset manually because there are only 10 vulnerabilities listed for a given domain.
+
+The raw text of all collected vulnerabilities was converted into a question-answer pair format using GPT-4 Turbo.
+
+The training dataset is available in the file: ```Datasets/Training Set.xlsx```
+It's structure is as follows:
+
+| Domain          | Question-Answer Pairs |
+|----------------|----------------------|
+| Windows        | 4488                 |
+| Android        | 5054                 |
+| Web Servers    | 4704                 |
+| Database       | 4615                 |
+| OWASP Top 10 Mobile | 111            |
+| OWASP Top 10 API    | 162            |
+| **Total**      | **19,134**            |
 
 # Validation Set
-To assess the performance of the fine-tuned models, a validation set was created by randomly selecting 20% of the rows from each individual OWASP and NVD domain. The total number of rows in this set amounted to 3,824. The validation set was constructed by taking question-answer pairs from the training set and subsequently rephrasing them using GPT-4 Turbo. This ensured that the evaluation was conducted on questions that the fine-tuned models had not seen word-for-word during training but had seen in a similar form. This approach tested whether the model had overfitted because ideally, the model should give the same answer to rephrased questions. If it does, it indicates that the model has learned the information in the answers.
+The validation set was created by sampling 20% of the question-answer pairs from each category of the training set (NVD + OWASP). These pairs were then rephrased using GPT-3.5 Turbo to create semantically identical but syntactically different question-answer pairs. The validation set was used to evaluate the fine-tuned models through the LLM-as-a-judge method.
+
+The validation dataset is available at: ```Datasets/Validation Set.json```
 
 # Hyperparameter Configuration
-Fine-tuning LLMs requires testing different combinations of hyperparameters to achieve the best possible performance. For this project, 3 different sets of hyperparameters were tested. Each set was designed to test the performance of the model under varying training conditions. Both the Falcon-7B and Llama-2 models were fine-tuned on each of the three sets. In total, six fine-tuned models were obtained in this study.
+The hyperparameters were configured as follows:
 
-<img src="Images/hyperparameters.png" width="600" height="auto">
+| Parameter                     | Set 1 (Baseline Configuration) | Set 2 (Gradual Fine-tuning) | Set 3 (Aggressive Learning) |
+|--------------------------------|-------------------------------|-----------------------------|-----------------------------|
+| num_train_epochs              | 15                            | 20                          | 12                          |
+| per_device_train_batch_size   | 8                             | 6                           | 10                          |
+| learning_rate                 | 3e-4                          | 2.5e-4                      | 5e-4                        |
+| weight_decay                  | 0                             | 0.0005                      | 0.0001                      |
+| max_grad_norm                 | 1                             | 1                           | 0.8                         |
+| lr_scheduler_type             | constant                      | linear                      | cosine                      |
+
+Both models used the same configurations, resulting in a total of six fine-tuned models with slight variations in performance.
+
 
 # Evaluation
-The evaluation was performed in two steps. In the first step, the respective base models were assessed to determine the number of questions they can accurately answer using only their pre-trained knowledge. In the second step, the fine-tuned models were evaluated to determine the extent of information they learned from the dataset.
+The evaluation was performed in two steps. First, the respective base models were assessed to determine how many questions they could accurately answer using only their pre-trained knowledge. Second, the fine-tuned models were evaluated to measure the extent of information learned from the dataset. The evaluation utilized the LLM-as-a-judge method with GPT-3.5 Turbo, which compared the similarity of answers from the validation set to those generated by the model.
 
-Each model was prompted with questions from the validation set to obtain the model generated or predicted answers. The questions, true answers and the model generated answers were then passed to a GPT-3.5-turbo Assistant to obtain correctness (denoted by 0 or 1), confidence percentage and the code generation capability. A GPT-4 model was not used for evaluation due to the sheer size of evaluations required, which was a costly endeavour. Six fine-tuned models and two base models were evaluated. Since the validation set contained 3824 items, the total number of evaluations performed were 30,592. A possible future work may be to evaluate the models with a better model such as GPT-4 or a newer model which OpenAI might release in the future. An example of an evaluated question-answer pair was as follows:
+```json
+{
+    "Question": "What are the potential consequences of exploiting CVE-2023-29351?",
+    "Model Answer": "The exploitation of CVE-2023-29351 could lead to an attacker gaining elevated privileges on a system by exploiting a flaw in the Windows Group Policy. This may result in unauthorized actions being performed, access to sensitive information, or the ability to enforce unwanted system policies, leading to a variety of malicious activities. It is important for administrators to apply security updates promptly to mitigate the risks associated with this vulnerability.\n\nReference:\n- https://msrc.microsoft.com/update-guide/vulnerability/CVE-2023-29351",
+    "True Answer": "The exploitation of CVE-2023-29351 could result in an attacker gaining elevated privileges on a system. This might allow them to execute arbitrary code, access sensitive data, install programs, or create new accounts with full user rights, leading to a variety of malicious activities.",
+    "GPT-3.5 Validation": "1",
+    "Confidence Percentage": "100",
+    "Asked for Code in Question": "No",
+    "Code in Answer": "No"
+}
+```
 
-<img src="Images/values.png" width="700" height="auto">
+# Usage
+Fine-tuning and evaluation were performed in the same Jupyter notebook files:
 
-All the evaluation steps including determining the validation accuracies and code generation capabilities are included in the Falcon-7B and Llama-2 folders.
+```
+Falcon-7B\Base Falcon 7-B\Falcon-7B-base-inference.ipynb
+Falcon-7B\Fine-tuning Falcon-7B\Baseline Configuration (Hyperparameter Set 1)\main.ipynb
+Falcon-7B\Fine-tuning Falcon-7B\Gradual Fine-tuning (Hyperparameter Set 2)\main.ipynb
+Falcon-7B\Fine-tuning Falcon-7B\Aggressive Learning (Hyperparameter Set 3)\main.ipynb
+```
+
+```
+Llama-2-7B\Base Llama-2-7B\Llama-2-7B-base-inference.ipynb
+Llama-2-7B\Fine-tuning Llama-2-7B\Baseline Configuration (Hyperparameter Set 1)\llama-2.ipynb
+Llama-2-7B\Fine-tuning Llama-2-7B\Gradual Fine-tuning (Hyperparameter Set 2)\llama-2.ipynb
+Llama-2-7B\Fine-tuning Llama-2-7B\Aggressive Learning (Hyperparameter Set 3)\llama-2.ipynb
+```
+
 
 # Results
-A comparison of the base and fine-tuned models indicated that the fine-tuned models effectively learned the information from the training dataset. Evaluation of the fine-tuned Falcon-7B and Llama-2 models demonstrated that the Falcon-7B model generated a higher number of accurate responses. However, the Llama-2-7b-chat-hf model produced more code examples for vulnerabilities. Since there was no significant difference in validation accuracies between the fine-tuned Falcon and Llama-2 models, both appear promising for use in cybersecurity applications. For hands-on cybersecurity learning applications, this study suggests that Llama-2 could perform better than Falcon due to its superior code generation capability.
+A decent improvement in the knowledge of the fine-tuned models was observed. However, the models exhibited frequent hallucinations and answers occasionally failed to end at logical stopping points even with deterministic token decoding (as opposed to random sampling). The models often continued generating text until the token limit was reached.
+
+# Personal Recommendation
+A RAG (Retrieval-Augmented Generation) based approach may be more suitable for this use case. Fine-tuning to increase the base knowledge of a model would require a very large and high quality dataset, especially since CVEs are reported continuously. A strong pre-trained model with RAG-based access to recent vulnerabilities would likely be more effective.
 
 # Accessibility
-The fine-tuned models and the dataset are made public on [HuggingFace](https://huggingface.co/shahrukh95). Feel free to access them and ask about vulnerabilities in Android, Databases, Windows and Web Servers from October 2022 to December 2023.
+The fine-tuned models and datasets are publicly available on [HuggingFace](https://huggingface.co/shahrukh95). Feel free to explore them and ask about vulnerabilities in Android, Databases, Windows, and Web Servers from October 2022 to December 2023.
