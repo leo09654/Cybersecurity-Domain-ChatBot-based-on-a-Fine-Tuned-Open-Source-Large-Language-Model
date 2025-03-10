@@ -1,0 +1,84 @@
+{
+  "name": "Network Security Monitor",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{"field": "minutes", "operation": "every", "value": 30}]
+        }
+      },
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [100, 300]
+    },
+    {
+      "parameters": {
+        "command": "netstat -na | findstr LISTENING",
+        "executeTimeout": 20
+      },
+      "name": "Port Scanner",
+      "type": "n8n-nodes-base.executeCommand",
+      "position": [300, 300]
+    },
+    {
+      "parameters": {
+        "command": "nmap -sT -p- localhost",
+        "executeTimeout": 60
+      },
+      "name": "Nmap Scan",
+      "type": "n8n-nodes-base.executeCommand",
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "const data = $input.all();\nconst openPorts = data[0].stdout.match(/\\d+\\/tcp\\s+open/g);\nreturn {json: {openPorts, timestamp: new Date().toISOString()}};"
+      },
+      "name": "Process Results",
+      "type": "n8n-nodes-base.function",
+      "position": [700, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api-inference.huggingface.co/models/shahrukh95/falcon-7b-Set-3-cybersecurity-layered-config",
+        "authentication": "headerAuth",
+        "headerParameters": {
+          "Authorization": "Bearer {{$env.HF_API_KEY}}"
+        },
+        "jsonParameters": true,
+        "options": {},
+        "bodyParameters": {
+          "inputs": "=Analyze these open ports for security risks: {{$json[\"openPorts\"]}}"
+        }
+      },
+      "name": "AI Risk Analysis",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "channels": ["email", "slack", "discord"],
+        "message": "=Network Security Report\nTimestamp: {{$json[\"timestamp\"]}}\nOpen Ports: {{$json[\"openPorts\"]}}\nAI Analysis: {{$json[\"analysis\"]}}"
+      },
+      "name": "Multi-Channel Alert",
+      "type": "n8n-nodes-base.multiChannelNotification",
+      "position": [1100, 300]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [[{"node": "Port Scanner", "type": "main", "index": 0}]]
+    },
+    "Port Scanner": {
+      "main": [[{"node": "Nmap Scan", "type": "main", "index": 0}]]
+    },
+    "Nmap Scan": {
+      "main": [[{"node": "Process Results", "type": "main", "index": 0}]]
+    },
+    "Process Results": {
+      "main": [[{"node": "AI Risk Analysis", "type": "main", "index": 0}]]
+    },
+    "AI Risk Analysis": {
+      "main": [[{"node": "Multi-Channel Alert", "type": "main", "index": 0}]]
+    }
+  }
+} 

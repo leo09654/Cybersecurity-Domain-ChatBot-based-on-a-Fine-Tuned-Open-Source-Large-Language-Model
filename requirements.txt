@@ -1,11 +1,13 @@
-requests
-python-dotenv
-torch
+requests>=2.31.0
+python-dotenv>=1.0.0
+torch>=2.1.0 --index-url https://download.pytorch.org/whl/cpu
 datasets
-transformers
+transformers>=4.36.0
 peft
 trl
 huggingface_hub
 ipywidgets
 accelerate
 bitsandbytes
+tqdm>=4.66.1
+colorama>=0.4.6

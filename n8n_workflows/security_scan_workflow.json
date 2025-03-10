@@ -1,0 +1,122 @@
+{
+  "name": "Security Scan Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "operation": "every",
+              "value": 12
+            }
+          ]
+        }
+      },
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [100, 300]
+    },
+    {
+      "parameters": {
+        "path": "{{$env.SCAN_PATH}}",
+        "options": {
+          "recursive": true,
+          "fileExtensions": [".exe", ".dll", ".bat", ".ps1", ".zip", ".pdf"]
+        }
+      },
+      "name": "File Scanner",
+      "type": "n8n-nodes-base.fileScanner",
+      "position": [300, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api-inference.huggingface.co/models/shahrukh95/falcon-7b-Set-3-cybersecurity-layered-config",
+        "authentication": "headerAuth",
+        "headerParameters": {
+          "Authorization": "Bearer {{$env.HF_API_KEY}}"
+        },
+        "options": {
+          "batchSize": 10
+        }
+      },
+      "name": "AI Analysis",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json[\"severity\"]}}",
+              "operation": "contains",
+              "value2": "high"
+            }
+          ]
+        }
+      },
+      "name": "Risk Filter",
+      "type": "n8n-nodes-base.if",
+      "position": [700, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{$env.WEBHOOK_URL}}",
+        "bodyParameters": {
+          "content": "=Security Alert: High-risk file detected\nFile: {{$json[\"file\"]}}\nThreat Level: {{$json[\"severity\"]}}\nAI Analysis: {{$json[\"analysis\"]}}"
+        }
+      },
+      "name": "Alert Notification",
+      "type": "n8n-nodes-base.webhook",
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "File Scanner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "File Scanner": {
+      "main": [
+        [
+          {
+            "node": "AI Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Analysis": {
+      "main": [
+        [
+          {
+            "node": "Risk Filter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Risk Filter": {
+      "main": [
+        [
+          {
+            "node": "Alert Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+} 

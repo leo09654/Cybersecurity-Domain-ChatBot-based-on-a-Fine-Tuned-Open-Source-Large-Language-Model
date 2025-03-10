@@ -1,0 +1,137 @@
+{
+  "name": "Security Log Analyzer",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{"field": "hours", "operation": "every", "value": 1}]
+        }
+      },
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [100, 300]
+    },
+    {
+      "parameters": {
+        "path": "{{$env.LOG_PATH}}",
+        "options": {
+          "fileExtensions": [".log", ".txt"],
+          "modifiedWithin": "1 hour"
+        }
+      },
+      "name": "Log File Scanner",
+      "type": "n8n-nodes-base.fileScanner",
+      "position": [300, 300]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "path": "={{$json[\"path\"]}}",
+        "options": {
+          "encoding": "utf8"
+        }
+      },
+      "name": "Read Logs",
+      "type": "n8n-nodes-base.fileOperations",
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "const content = $input.first().content;\nconst errorLines = content.split('\\n').filter(line => \n  line.toLowerCase().includes('error') || \n  line.toLowerCase().includes('warning') || \n  line.toLowerCase().includes('critical') ||\n  line.toLowerCase().includes('failed')\n);\nreturn {json: {errors: errorLines, count: errorLines.length}};"
+      },
+      "name": "Extract Errors",
+      "type": "n8n-nodes-base.function",
+      "position": [700, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api-inference.huggingface.co/models/shahrukh95/falcon-7b-Set-3-cybersecurity-layered-config",
+        "authentication": "headerAuth",
+        "headerParameters": {
+          "Authorization": "Bearer {{$env.HF_API_KEY}}"
+        },
+        "jsonParameters": true,
+        "bodyParameters": {
+          "inputs": "=Analyze these security log errors for potential threats: {{$json[\"errors\"]}}"
+        }
+      },
+      "name": "AI Analysis",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{$json[\"count\"]}}",
+              "operation": "larger",
+              "value2": 5
+            }
+          ]
+        }
+      },
+      "name": "Error Count Check",
+      "type": "n8n-nodes-base.if",
+      "position": [1100, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{$env.TEAMS_WEBHOOK}}",
+        "jsonParameters": true,
+        "bodyParameters": {
+          "type": "message",
+          "attachments": [
+            {
+              "contentType": "application/vnd.microsoft.card.adaptive",
+              "content": {
+                "type": "AdaptiveCard",
+                "body": [
+                  {
+                    "type": "TextBlock",
+                    "text": "Security Log Alert",
+                    "weight": "bolder",
+                    "size": "medium"
+                  },
+                  {
+                    "type": "TextBlock",
+                    "text": "={{$json[\"errors\"].join('\\n')}}"
+                  },
+                  {
+                    "type": "TextBlock",
+                    "text": "=AI Analysis: {{$json[\"analysis\"]}}",
+                    "wrap": true
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "name": "Teams Alert",
+      "type": "n8n-nodes-base.microsoftTeams",
+      "position": [1300, 300]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [[{"node": "Log File Scanner", "type": "main", "index": 0}]]
+    },
+    "Log File Scanner": {
+      "main": [[{"node": "Read Logs", "type": "main", "index": 0}]]
+    },
+    "Read Logs": {
+      "main": [[{"node": "Extract Errors", "type": "main", "index": 0}]]
+    },
+    "Extract Errors": {
+      "main": [[{"node": "AI Analysis", "type": "main", "index": 0}]]
+    },
+    "AI Analysis": {
+      "main": [[{"node": "Error Count Check", "type": "main", "index": 0}]]
+    },
+    "Error Count Check": {
+      "main": [[{"node": "Teams Alert", "type": "main", "index": 0}]]
+    }
+  }
+} 

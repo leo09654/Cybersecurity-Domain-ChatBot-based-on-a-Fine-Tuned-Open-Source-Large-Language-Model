@@ -1,0 +1,133 @@
+{
+  "name": "System Activity Monitor",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{"field": "seconds", "operation": "every", "value": 30}]
+        }
+      },
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [100, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "const os = require('os');\nconst activeWin = require('active-win');\n\nconst activeWindow = await activeWin();\nconst systemInfo = {\n  activeWindow: activeWindow ? {\n    title: activeWindow.title,\n    owner: activeWindow.owner,\n    processId: activeWindow.processId\n  } : null,\n  cpuUsage: os.loadavg()[0],\n  memoryUsage: (os.totalmem() - os.freemem()) / os.totalmem() * 100,\n  timestamp: new Date().toISOString()\n};\n\nreturn {json: systemInfo};"
+      },
+      "name": "System Info",
+      "type": "n8n-nodes-base.function",
+      "position": [300, 300]
+    },
+    {
+      "parameters": {
+        "command": "powershell \"Get-Process | Sort-Object CPU -Descending | Select-Object -First 5 | ConvertTo-Json\"",
+        "executeTimeout": 10
+      },
+      "name": "Process Monitor",
+      "type": "n8n-nodes-base.executeCommand",
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "const data = $input.all();\nconst systemInfo = data[0].json;\nconst processes = JSON.parse(data[1].stdout);\n\nconst analysis = {\n  highCpuProcesses: processes.filter(p => p.CPU > 50),\n  suspiciousWindows: systemInfo.activeWindow?.title.includes('cmd') || systemInfo.activeWindow?.title.includes('powershell'),\n  highResourceUsage: systemInfo.cpuUsage > 80 || systemInfo.memoryUsage > 90\n};\n\nreturn {json: { systemInfo, processes, analysis }};"
+      },
+      "name": "Analyze Activity",
+      "type": "n8n-nodes-base.function",
+      "position": [700, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api-inference.huggingface.co/models/shahrukh95/falcon-7b-Set-3-cybersecurity-layered-config",
+        "authentication": "headerAuth",
+        "headerParameters": {
+          "Authorization": "Bearer {{$env.HF_API_KEY}}"
+        },
+        "jsonParameters": true,
+        "bodyParameters": {
+          "inputs": "=Analyze this system activity for security threats: Active Window: {{$json[\"systemInfo\"].activeWindow.title}}, High CPU Processes: {{$json[\"processes\"].map(p => p.ProcessName).join(', ')}}"
+        }
+      },
+      "name": "AI Analysis",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json[\"analysis\"].suspiciousWindows || $json[\"analysis\"].highResourceUsage}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "name": "Check Threats",
+      "type": "n8n-nodes-base.if",
+      "position": [1100, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{$env.TEAMS_WEBHOOK}}",
+        "jsonParameters": true,
+        "bodyParameters": {
+          "type": "message",
+          "attachments": [
+            {
+              "contentType": "application/vnd.microsoft.card.adaptive",
+              "content": {
+                "type": "AdaptiveCard",
+                "body": [
+                  {
+                    "type": "TextBlock",
+                    "text": "System Activity Alert",
+                    "weight": "bolder",
+                    "size": "medium"
+                  },
+                  {
+                    "type": "TextBlock",
+                    "text": "=Active Window: {{$json[\"systemInfo\"].activeWindow.title}}"
+                  },
+                  {
+                    "type": "TextBlock",
+                    "text": "=High CPU Processes: {{$json[\"processes\"].map(p => p.ProcessName).join(', ')}}"
+                  },
+                  {
+                    "type": "TextBlock",
+                    "text": "=AI Analysis: {{$json[\"aiAnalysis\"]}}",
+                    "wrap": true
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "name": "Send Alert",
+      "type": "n8n-nodes-base.microsoftTeams",
+      "position": [1300, 300]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [[{"node": "System Info", "type": "main", "index": 0}]]
+    },
+    "System Info": {
+      "main": [[{"node": "Process Monitor", "type": "main", "index": 0}]]
+    },
+    "Process Monitor": {
+      "main": [[{"node": "Analyze Activity", "type": "main", "index": 0}]]
+    },
+    "Analyze Activity": {
+      "main": [[{"node": "AI Analysis", "type": "main", "index": 0}]]
+    },
+    "AI Analysis": {
+      "main": [[{"node": "Check Threats", "type": "main", "index": 0}]]
+    },
+    "Check Threats": {
+      "main": [[{"node": "Send Alert", "type": "main", "index": 0}]]
+    }
+  }
+} 
